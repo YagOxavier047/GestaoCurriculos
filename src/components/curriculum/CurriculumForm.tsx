@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
@@ -12,22 +12,42 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { Plus, Trash2 } from 'lucide-react';
 
+const generateId = (prefix: string): string => {
+  if (typeof window !== 'undefined') {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+  return `${prefix}-fallback`;
+};
+
 export function CurriculumForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const id = searchParams.get('id') || undefined;
-  const { curriculos, addCurriculo, getById, updateCurriculo } = useCurriculos();
+  
+  // Estado de hidratação para evitar acesso a APIs do navegador no SSR
+  const [isHydrated, setIsHydrated] = useState(false);
+  
+  const { addCurriculo, getById, updateCurriculo } = useCurriculos();
 
+  // Inicializa o form com valores padrão SEM crypto.randomUUID() no corpo do componente
   const { register, control, handleSubmit, formState: { errors, isSubmitting }, reset } = useForm<CurriculumFormData>({
     resolver: yupResolver(curriculumSchema),
     defaultValues: {
-      experiencias: [{ id: crypto.randomUUID(), empresa: '', cargo: '', periodo: '', descricao: '' }],
-      formacoes: [{ id: crypto.randomUUID(), instituicao: '', curso: '', conclusao: '' }]
+      experiencias: [{ id: 'temp-exp-1', empresa: '', cargo: '', periodo: '', descricao: '' }],
+      formacoes: [{ id: 'temp-edu-1', instituicao: '', curso: '', conclusao: '' }]
     }
   });
 
+  // Efeito para hidratação e carregamento de dados
   useEffect(() => {
-    if (!id) return;
+    queueMicrotask(() => {
+      setIsHydrated(true);
+    });
+  }, []);
+
+  // Efeito para carregar currículo existente (só executa no cliente)
+  useEffect(() => {
+    if (!isHydrated || !id) return;
 
     const existingCurriculo = getById(id);
     if (!existingCurriculo) {
@@ -44,38 +64,64 @@ export function CurriculumForm() {
       cargoPretendido: existingCurriculo.cargoPretendido,
       resumo: existingCurriculo.resumo,
       experiencias: existingCurriculo.experiencias.map((exp) => ({
-        id: exp.id,
+        id: exp.id || generateId('exp'),
         empresa: exp.empresa,
         cargo: exp.cargo,
         periodo: exp.periodo,
         descricao: exp.descricao,
       })),
       formacoes: existingCurriculo.formacoes.map((edu) => ({
-        id: edu.id,
+        id: edu.id || generateId('edu'),
         instituicao: edu.instituicao,
         curso: edu.curso,
         conclusao: edu.conclusao,
       })),
     });
-  }, [id, getById, reset]);
+  }, [isHydrated, id, getById, reset]);
 
   const { fields: expFields, append: addExp, remove: removeExp } = useFieldArray({ control, name: 'experiencias' });
   const { fields: eduFields, append: addEdu, remove: removeEdu } = useFieldArray({ control, name: 'formacoes' });
 
   const onSubmit = async (data: CurriculumFormData) => {
     try {
+      // Garante que estamos no ambiente cliente antes de salvar
+      if (typeof window === 'undefined') {
+        toast.error('Ambiente não suportado para salvar dados');
+        return;
+      }
+
       const success = id ? updateCurriculo(id, data) : addCurriculo(data);
       if (!success) {
         return;
       }
 
       toast.success(id ? 'Currículo atualizado com sucesso!' : 'Currículo cadastrado com sucesso!');
-      reset();
-      router.push('/sistema/curiculos/visualizar');
-    } catch (error: any) {
-      toast.error(error.message || 'Erro ao salvar currículo');
+      reset({
+        experiencias: [{ id: generateId('exp'), empresa: '', cargo: '', periodo: '', descricao: '' }],
+        formacoes: [{ id: generateId('edu'), instituicao: '', curso: '', conclusao: '' }]
+      });
+      router.push('/sistema/curriculos/visualizar');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erro ao salvar currículo';
+      toast.error(message);
     }
   };
+
+  // Enquanto não hidratar, mostra loading para evitar mismatch entre SSR e cliente
+  if (!isHydrated) {
+    return (
+      <div className="space-y-6 max-w-2xl mx-auto py-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 bg-slate-200 rounded w-1/3"></div>
+          <div className="space-y-3">
+            <div className="h-10 bg-slate-200 rounded"></div>
+            <div className="h-10 bg-slate-200 rounded"></div>
+            <div className="h-10 bg-slate-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-w-2xl mx-auto">
@@ -138,7 +184,13 @@ export function CurriculumForm() {
             type="button" 
             variant="outline" 
             size="sm" 
-            onClick={() => addExp({ id: crypto.randomUUID(), empresa: '', cargo: '', periodo: '', descricao: '' })}
+            onClick={() => addExp({ 
+              id: generateId('exp'), 
+              empresa: '', 
+              cargo: '', 
+              periodo: '', 
+              descricao: '' 
+            })}
           >
             <Plus className="w-4 h-4 mr-1" /> Adicionar Experiência
           </Button>
@@ -195,7 +247,12 @@ export function CurriculumForm() {
             type="button" 
             variant="outline" 
             size="sm" 
-            onClick={() => addEdu({ id: crypto.randomUUID(), instituicao: '', curso: '', conclusao: '' })}
+            onClick={() => addEdu({ 
+              id: generateId('edu'), 
+              instituicao: '', 
+              curso: '', 
+              conclusao: '' 
+            })}
           >
             <Plus className="w-4 h-4 mr-1" /> Adicionar Formação
           </Button>
@@ -240,7 +297,7 @@ export function CurriculumForm() {
       {/* Botões */}
       <div className="flex flex-col gap-2 pt-4 border-t sm:flex-row sm:items-center sm:justify-between">
         <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
-          {isSubmitting ? 'Salvando...' : id ? 'Atualizar Currículo' : 'Salvar Currículo'}
+          {isSubmitting ? 'Salvando...' : (id ? 'Atualizar Currículo' : 'Salvar Currículo')}
         </Button>
         <Button 
           type="button" 
